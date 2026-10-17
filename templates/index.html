@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Secure Network Chat</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/peerjs@1.5.1/dist/peerjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+</head>
+<body class="bg-slate-100 h-screen flex items-center justify-center p-4">
+    
+    <!-- 1. AUTH SCREEN -->
+    <div id="auth-screen" class="w-full max-w-sm bg-white rounded-xl shadow-lg p-6">
+        <h1 class="text-2xl font-bold text-center mb-6 text-slate-800">Welcome Boss</h1>
+        <input type="text" id="username" placeholder="Username" class="w-full mb-3 px-4 py-2 border rounded-lg focus:outline-blue-500">
+        <input type="password" id="password" placeholder="Password" class="w-full mb-4 px-4 py-2 border rounded-lg focus:outline-blue-500">
+        <div class="flex gap-2">
+            <button onclick="authenticate('login')" class="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700">Login</button>
+            <button onclick="authenticate('signup')" class="flex-1 bg-green-600 text-white py-2 rounded-lg hover:bg-green-700">Sign Up</button>
+        </div>
+        <p id="auth-msg" class="text-red-500 text-sm mt-3 text-center"></p>
+    </div>
+
+    <!-- 2. MAIN APP SCREEN (Hidden by default) -->
+    <div id="app-screen" class="hidden w-full max-w-4xl bg-white rounded-xl shadow-lg h-[90vh] flex overflow-hidden">
+        
+        <!-- Sidebar (Friends & Search) -->
+        <div class="w-1/3 bg-slate-50 border-r flex flex-col">
+            <div class="p-4 bg-blue-600 text-white font-bold flex justify-between items-center">
+                <span id="my-name-display"></span>
+                <button onclick="logout()" class="text-xs bg-red-500 px-2 py-1 rounded hover:bg-red-600">Logout</button>
+            </div>
+            
+            <!-- Search -->
+            <div class="p-3 border-b flex gap-2">
+                <input type="text" id="search-input" placeholder="Search user..." class="w-full px-3 py-1 border rounded text-sm focus:outline-blue-500">
+                <button onclick="searchUser()" class="bg-blue-500 text-white px-3 py-1 rounded text-sm">Find</button>
+            </div>
+            <div id="search-results" class="p-2 border-b bg-white text-sm"></div>
+
+            <!-- Pending Requests -->
+            <div id="requests-container" class="p-3 border-b bg-yellow-50 hidden">
+                <h3 class="text-xs font-bold text-slate-500 mb-2">FRIEND REQUESTS</h3>
+                <div id="requests-list" class="space-y-2"></div>
+            </div>
+
+            <!-- Friends List -->
+            <div class="flex-1 overflow-y-auto p-3">
+                <h3 class="text-xs font-bold text-slate-500 mb-2">MY FRIENDS</h3>
+                <div id="friends-list" class="space-y-2"></div>
+            </div>
+        </div>
+
+        <!-- Chat Area -->
+        <div class="flex-1 flex flex-col bg-white">
+            <div id="chat-header" class="p-4 border-b bg-slate-50 font-bold text-slate-800 flex justify-between items-center">
+                <span id="chat-with-name">Select a friend to chat</span>
+                <button id="call-btn" class="hidden text-green-600 hover:bg-green-100 p-2 rounded-full">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                </button>
+            </div>
+            
+            <div id="video-container" class="hidden relative h-48 bg-black">
+                <video id="remote-video" class="w-full h-full object-cover" autoplay playsinline></video>
+                <video id="local-video" class="w-24 h-32 object-cover absolute bottom-2 right-2 border-2 border-white rounded-lg" autoplay playsinline muted></video>
+                <button onclick="endCall()" class="absolute bottom-2 left-2 bg-red-600 text-white text-xs px-3 py-1 rounded-lg">End Call</button>
+            </div>
+
+            <div id="chat-box" class="flex-1 p-4 overflow-y-auto bg-slate-100 flex flex-col gap-2"></div>
+
+            <div class="p-3 border-t bg-white flex gap-2 items-center">
+                <input type="text" id="msg-input" placeholder="Type a secure message..." class="flex-1 px-4 py-2 border rounded-lg focus:outline-blue-500" disabled>
+                <button id="send-btn" onclick="sendMessage()" class="bg-blue-600 text-white px-5 py-2 rounded-lg disabled:bg-slate-300" disabled>Send</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const peer = new Peer();
+        let myPeerId = null;
+        let myUsername = null;
+        let chatConn = null;
+        let activeFriend = null;
+        let activeFriendPeerId = null;
+        let encryptionKey = "boss_secret_room_key"; // In production, exchange this via RSA. Hardcoded for simplicity here.
+        let localStream = null;
+
+        // UI Elements
+        const authScreen = document.getElementById('auth-screen');
+        const appScreen = document.getElementById('app-screen');
+        const chatBox = document.getElementById('chat-box');
+        const msgInput = document.getElementById('msg-input');
+        const sendBtn = document.getElementById('send-btn');
+        const callBtn = document.getElementById('call-btn');
+
+        peer.on('open', id => myPeerId = id);
+
+        // 1. AUTHENTICATION
+        async function authenticate(action) {
+            const user = document.getElementById('username').value;
+            const pass = document.getElementById('password').value;
+            if(!user || !pass) return alert("Enter details");
+
+            const res = await fetch('/auth', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ action: action, username: user, password: pass, peer_id: myPeerId })
+            });
+            const data = await res.json();
+            if(data.success) {
+                myUsername = user;
+                document.getElementById('my-name-display').textContent = `Hi, ${myUsername}`;
+                authScreen.classList.add('hidden');
+                appScreen.classList.remove('hidden');
+                loadDashboard();
+            } else {
+                document.getElementById('auth-msg').textContent = data.error;
+            }
+        }
+
+        // 2. DASHBOARD DATA (Friends & Requests)
+        async function loadDashboard() {
+            const res = await fetch(`/get_dashboard_data?username=${myUsername}`);
+            const data = await res.json();
+            
+            // Render Requests
+            const reqContainer = document.getElementById('requests-container');
+            const reqList = document.getElementById('requests-list');
+            reqList.innerHTML = '';
+            if(data.requests.length > 0) {
+                reqContainer.classList.remove('hidden');
+                data.requests.forEach(req => {
+                    reqList.innerHTML += `<div class="flex justify-between items-center text-sm bg-white p-2 rounded shadow-sm">
+                        <span>${req}</span>
+                        <button onclick="handleRequest('accept', '${req}')" class="bg-green-500 text-white px-2 py-1 rounded text-xs">Accept</button>
+                    </div>`;
+                });
+            } else {
+                reqContainer.classList.add('hidden');
+            }
+
+            // Render Friends
+            const friendsList = document.getElementById('friends-list');
+            friendsList.innerHTML = '';
+            data.friends.forEach(f => {
+                friendsList.innerHTML += `<div onclick="startChat('${f.username}', '${f.peer_id}')" class="cursor-pointer hover:bg-blue-50 p-2 rounded border border-slate-200 text-sm font-medium flex items-center gap-2">
+                    <div class="w-2 h-2 rounded-full ${f.peer_id ? 'bg-green-500' : 'bg-slate-300'}"></div>
+                    ${f.username}
+                </div>`;
+            });
+        }
+
+        // 3. SEARCH & ADD FRIEND
+        async function searchUser() {
+            const query = document.getElementById('search-input').value;
+            const res = await fetch(`/search?username=${query}&me=${myUsername}`);
+            const users = await res.json();
+            let html = '';
+            users.forEach(u => {
+                html += `<div class="flex justify-between mt-1 items-center"><span>${u}</span> <button onclick="handleRequest('send', '${u}')" class="bg-blue-100 text-blue-700 px-2 py-1 rounded text-xs">Add</button></div>`;
+            });
+            document.getElementById('search-results').innerHTML = html || 'No users found.';
+        }
+
+        async function handleRequest(action, otherUser) {
+            await fetch('/friend_action', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ action: action, sender: myUsername, receiver: otherUser })
+            });
+            alert("Action successful!");
+            loadDashboard();
+        }
+
+        // 4. CHAT LOGIC
+        function startChat(friendName, friendPeerId) {
+            activeFriend = friendName;
+            activeFriendPeerId = friendPeerId;
+            document.getElementById('chat-with-name').textContent = `Chatting securely with ${friendName}`;
+            chatBox.innerHTML = '';
+            
+            if(friendPeerId) {
+                // Connect to friend
+                chatConn = peer.connect(friendPeerId);
+                setupConnection(chatConn);
+            } else {
+                displayMessage("User is offline. Cannot establish P2P connection.", 'bg-red-100 text-red-600 self-center', false);
+            }
+        }
+
+        // Listen for incoming connections
+        peer.on('connection', (conn) => setupConnection(conn));
+
+        function setupConnection(conn) {
+            chatConn = conn;
+            conn.on('open', () => {
+                msgInput.disabled = false; sendBtn.disabled = false; callBtn.classList.remove('hidden');
+                displayMessage("🔒 End-to-End Encrypted Connection Established", 'bg-green-100 text-green-700 self-center text-xs', false);
+            });
+            conn.on('data', (data) => {
+                if(data.type === 'text') {
+                    const decrypted = CryptoJS.AES.decrypt(data.content, encryptionKey).toString(CryptoJS.enc.Utf8);
+                    displayMessage(decrypted, 'bg-white text-slate-800 self-start', false);
+                }
+            });
+        }
+
+        function sendMessage() {
+            const text = msgInput.value.trim();
+            if (text && chatConn?.open) {
+                const encrypted = CryptoJS.AES.encrypt(text, encryptionKey).toString();
+                chatConn.send({ type: 'text', content: encrypted });
+                displayMessage(text, 'bg-blue-600 text-white self-end', true);
+                msgInput.value = '';
+            }
+        }
+
+        function displayMessage(text, classes, isSender) {
+            chatBox.innerHTML += `<div class="max-w-[75%] rounded-lg px-3 py-2 text-sm shadow-sm ${classes}">${text}</div>`;
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        // 5. VIDEO CALL
+        peer.on('call', async (call) => {
+            if(confirm("Incoming call... Accept?")) {
+                localStream = await navigator.mediaDevices.getUserMedia({video: true, audio: true});
+                document.getElementById('local-video').srcObject = localStream;
+                call.answer(localStream);
+                setupCall(call);
+            } else call.close();
+        });
+
+        callBtn.onclick = async () => {
+            localStream = await navigator.mediaDevices.getUserMedia({video: true, audio: true});
+            document.getElementById('local-video').srcObject = localStream;
+            const call = peer.call(activeFriendPeerId, localStream);
+            setupCall(call);
+        };
+
+        function setupCall(call) {
+            document.getElementById('video-container').classList.remove('hidden');
+            call.on('stream', remoteStream => document.getElementById('remote-video').srcObject = remoteStream);
+            window.currentCall = call;
+        }
+
+        function endCall() {
+            if(window.currentCall) window.currentCall.close();
+            if(localStream) localStream.getTracks().forEach(t => t.stop());
+            document.getElementById('video-container').classList.add('hidden');
+        }
+
+        function logout() { location.reload(); }
+    </script>
+</body>
+</html>

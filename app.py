@@ -1,0 +1,109 @@
+from flask import Flask, request, jsonify, session, render_template
+from flask_cors import CORS
+import sqlite3
+import hashlib
+
+app = Flask(__name__)
+app.secret_key = "super_secret_boss_key"
+CORS(app)
+
+def get_db_connection():
+    conn = sqlite3.connect('chat_users.db')
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def init_db():
+    conn = get_db_connection()
+    conn.execute('''CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, peer_id TEXT)''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS friends (id INTEGER PRIMARY KEY AUTOINCREMENT, sender TEXT NOT NULL, receiver TEXT NOT NULL, status TEXT DEFAULT 'pending')''')
+    conn.commit()
+    conn.close()
+
+# Render/Gunicorn स्टार्ट होते ही डेटाबेस बनाने के लिए इसे यहाँ कॉल किया गया है
+init_db()
+
+@app.route('/')
+def home():
+    return render_template('index.html')
+
+@app.route('/auth', methods=['POST'])
+def auth():
+    data = request.json
+    action = data.get('action') # 'signup' or 'login'
+    username = data.get('username')
+    password = hashlib.sha256(data.get('password').encode()).hexdigest()
+    peer_id = data.get('peer_id')
+    
+    conn = get_db_connection()
+    try:
+        if action == 'signup':
+            conn.execute('INSERT INTO users (username, password, peer_id) VALUES (?, ?, ?)', (username, password, peer_id))
+            conn.commit()
+            return jsonify({"success": True, "message": "Account created! You are logged in."})
+        elif action == 'login':
+            user = conn.execute('SELECT * FROM users WHERE username = ? AND password = ?', (username, password)).fetchone()
+            if user:
+                conn.execute('UPDATE users SET peer_id = ? WHERE username = ?', (peer_id, username))
+                conn.commit()
+                return jsonify({"success": True, "message": "Login successful!"})
+            return jsonify({"success": False, "error": "Invalid credentials!"}), 401
+    except sqlite3.IntegrityError:
+        return jsonify({"success": False, "error": "Username already exists!"}), 400
+    finally:
+        conn.close()
+
+@app.route('/search', methods=['GET'])
+def search_user():
+    query = request.args.get('username')
+    me = request.args.get('me')
+    conn = get_db_connection()
+    users = conn.execute('SELECT username FROM users WHERE username LIKE ? AND username != ? LIMIT 5', ('%'+query+'%', me)).fetchall()
+    conn.close()
+    return jsonify([u['username'] for u in users])
+
+@app.route('/friend_action', methods=['POST'])
+def friend_action():
+    data = request.json
+    action = data.get('action')
+    sender = data.get('sender')
+    receiver = data.get('receiver')
+    
+    conn = get_db_connection()
+    if action == 'send':
+        existing = conn.execute('SELECT * FROM friends WHERE (sender=? AND receiver=?) OR (sender=? AND receiver=?)', (sender, receiver, receiver, sender)).fetchone()
+        if not existing:
+            conn.execute('INSERT INTO friends (sender, receiver) VALUES (?, ?)', (sender, receiver))
+            msg = "Request sent!"
+        else:
+            msg = "Request already exists or you are friends."
+    elif action == 'accept':
+        conn.execute("UPDATE friends SET status = 'accepted' WHERE sender = ? AND receiver = ?", (receiver, sender))
+        msg = "Request accepted!"
+    conn.commit()
+    conn.close()
+    return jsonify({"message": msg})
+
+@app.route('/get_dashboard_data', methods=['GET'])
+def get_dashboard_data():
+    me = request.args.get('username')
+    conn = get_db_connection()
+    # Pending requests
+    pending = conn.execute("SELECT sender FROM friends WHERE receiver = ? AND status = 'pending'", (me,)).fetchall()
+    # Accepted friends
+    friends = conn.execute("SELECT sender, receiver FROM friends WHERE status = 'accepted' AND (sender = ? OR receiver = ?)", (me, me)).fetchall()
+    
+    friend_list = []
+    for f in friends:
+        friend_name = f['sender'] if f['receiver'] == me else f['receiver']
+        peer_data = conn.execute("SELECT peer_id FROM users WHERE username = ?", (friend_name,)).fetchone()
+        friend_list.append({"username": friend_name, "peer_id": peer_data['peer_id'] if peer_data else None})
+        
+    conn.close()
+    return jsonify({
+        "requests": [p['sender'] for p in pending],
+        "friends": friend_list
+    })
+
+if __name__ == '__main__':
+    # Render खुद अपना पोर्ट लगाता है, इसलिए यहाँ अब adhoc ssl या 0.0.0.0 की ज़रूरत नहीं है
+    app.run(debug=True, port=5000)
