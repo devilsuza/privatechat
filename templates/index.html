@@ -1,127 +1,102 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Secure Network Chat</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/peerjs@1.5.1/dist/peerjs.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
-    <style>
-        /* Custom Scrollbar for a premium look */
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
-        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
-        .chat-bg { background-color: #efeae2; background-image: radial-gradient(#d1d5db 1px, transparent 1px); background-size: 20px 20px; }
-    </style>
-</head>
-<body class="bg-slate-200 h-screen font-sans antialiased flex items-center justify-center">
+from flask import Flask, request, jsonify, session, render_template
+from flask_cors import CORS
+import sqlite3
+import hashlib
+
+app = Flask(__name__)
+app.secret_key = "super_secret_boss_key"
+CORS(app)
+
+def get_db_connection():
+    conn = sqlite3.connect('chat_users.db')
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def init_db():
+    conn = get_db_connection()
+    conn.execute('''CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, peer_id TEXT)''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS friends (id INTEGER PRIMARY KEY AUTOINCREMENT, sender TEXT NOT NULL, receiver TEXT NOT NULL, status TEXT DEFAULT 'pending')''')
+    conn.commit()
+    conn.close()
+
+init_db()
+
+@app.route('/')
+def home():
+    return render_template('index.html')
+
+@app.route('/auth', methods=['POST'])
+def auth():
+    data = request.json
+    action = data.get('action')
+    username = data.get('username')
+    password = hashlib.sha256(data.get('password').encode()).hexdigest()
+    peer_id = data.get('peer_id')
     
-    <!-- 1. AUTH SCREEN (Modern Card) -->
-    <div id="auth-screen" class="w-full max-w-md bg-white rounded-2xl shadow-2xl p-8 transform transition-all">
-        <div class="text-center mb-8">
-            <div class="w-16 h-16 bg-blue-600 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
-                <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
-            </div>
-            <h1 class="text-3xl font-extrabold text-slate-800">Welcome Boss</h1>
-            <p class="text-sm text-slate-500 mt-2">Sign in to your secure workspace</p>
-        </div>
-        <div class="space-y-4">
-            <div>
-                <label class="block text-sm font-medium text-slate-700 mb-1">Username</label>
-                <input type="text" id="username" class="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all outline-none bg-slate-50" placeholder="Enter username">
-            </div>
-            <div>
-                <label class="block text-sm font-medium text-slate-700 mb-1">Password</label>
-                <input type="password" id="password" class="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all outline-none bg-slate-50" placeholder="••••••••">
-            </div>
-            <div class="flex gap-3 pt-2">
-                <button onclick="authenticate('login')" class="flex-1 bg-blue-600 text-white font-semibold py-3 rounded-xl hover:bg-blue-700 shadow-md shadow-blue-200 transition-all">Login</button>
-                <button onclick="authenticate('signup')" class="flex-1 bg-slate-800 text-white font-semibold py-3 rounded-xl hover:bg-slate-900 shadow-md shadow-slate-300 transition-all">Sign Up</button>
-            </div>
-        </div>
-        <p id="auth-msg" class="text-red-500 text-sm mt-4 text-center font-medium"></p>
-    </div>
+    conn = get_db_connection()
+    try:
+        if action == 'signup':
+            conn.execute('INSERT INTO users (username, password, peer_id) VALUES (?, ?, ?)', (username, password, peer_id))
+            conn.commit()
+            return jsonify({"success": True, "message": "Account created! You are logged in."})
+        elif action == 'login':
+            user = conn.execute('SELECT * FROM users WHERE username = ? AND password = ?', (username, password)).fetchone()
+            if user:
+                conn.execute('UPDATE users SET peer_id = ? WHERE username = ?', (peer_id, username))
+                conn.commit()
+                return jsonify({"success": True, "message": "Login successful!"})
+            return jsonify({"success": False, "error": "Invalid credentials!"}), 401
+    except sqlite3.IntegrityError:
+        return jsonify({"success": False, "error": "Username already exists!"}), 400
+    finally:
+        conn.close()
 
-    <!-- 2. MAIN APP SCREEN -->
-    <div id="app-screen" class="hidden w-full h-full sm:h-[95vh] sm:max-w-6xl sm:rounded-2xl bg-white shadow-2xl flex overflow-hidden border border-slate-200">
+@app.route('/search', methods=['GET'])
+def search_user():
+    query = request.args.get('username')
+    me = request.args.get('me')
+    conn = get_db_connection()
+    users = conn.execute('SELECT username FROM users WHERE username LIKE ? AND username != ? LIMIT 5', ('%'+query+'%', me)).fetchall()
+    conn.close()
+    return jsonify([u['username'] for u in users])
+
+@app.route('/friend_action', methods=['POST'])
+def friend_action():
+    data = request.json
+    action = data.get('action')
+    sender = data.get('sender')
+    receiver = data.get('receiver')
+    
+    conn = get_db_connection()
+    if action == 'send':
+        existing = conn.execute('SELECT * FROM friends WHERE (sender=? AND receiver=?) OR (sender=? AND receiver=?)', (sender, receiver, receiver, sender)).fetchone()
+        if not existing:
+            conn.execute('INSERT INTO friends (sender, receiver) VALUES (?, ?)', (sender, receiver))
+            msg = "Request sent!"
+        else:
+            msg = "Request already exists or you are friends."
+    elif action == 'accept':
+        conn.execute("UPDATE friends SET status = 'accepted' WHERE sender = ? AND receiver = ?", (receiver, sender))
+        msg = "Request accepted!"
+    conn.commit()
+    conn.close()
+    return jsonify({"message": msg})
+
+@app.route('/get_dashboard_data', methods=['GET'])
+def get_dashboard_data():
+    me = request.args.get('username')
+    conn = get_db_connection()
+    pending = conn.execute("SELECT sender FROM friends WHERE receiver = ? AND status = 'pending'", (me,)).fetchall()
+    friends = conn.execute("SELECT sender, receiver FROM friends WHERE status = 'accepted' AND (sender = ? OR receiver = ?)", (me, me)).fetchall()
+    
+    friend_list = []
+    for f in friends:
+        friend_name = f['sender'] if f['receiver'] == me else f['receiver']
+        peer_data = conn.execute("SELECT peer_id FROM users WHERE username = ?", (friend_name,)).fetchone()
+        friend_list.append({"username": friend_name, "peer_id": peer_data['peer_id'] if peer_data else None})
         
-        <!-- Sidebar (Friends & Search) -->
-        <div class="w-full sm:w-80 md:w-96 bg-white border-r border-slate-200 flex flex-col h-full z-10">
-            <!-- User Profile Header -->
-            <div class="p-4 bg-slate-50 border-b flex justify-between items-center h-16">
-                <div class="flex items-center gap-3">
-                    <img id="my-avatar" src="" alt="avatar" class="w-10 h-10 rounded-full bg-blue-100 object-cover border border-slate-300">
-                    <span id="my-name-display" class="font-bold text-slate-800"></span>
-                </div>
-                <button onclick="logout()" class="text-slate-500 hover:text-red-500 transition-colors" title="Logout">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
-                </button>
-            </div>
-            
-            <!-- Search -->
-            <div class="p-3 border-b bg-white">
-                <div class="relative flex items-center">
-                    <svg class="w-5 h-5 absolute left-3 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
-                    <input type="text" id="search-input" placeholder="Find new friends..." class="w-full pl-10 pr-20 py-2.5 bg-slate-100 border-none rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all">
-                    <button onclick="searchUser()" class="absolute right-1 bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1.5 rounded-lg font-medium transition-colors">Search</button>
-                </div>
-                <div id="search-results" class="mt-2 space-y-1 text-sm"></div>
-            </div>
+    conn.close()
+    return jsonify({"requests": [p['sender'] for p in pending], "friends": friend_list})
 
-            <!-- Pending Requests -->
-            <div id="requests-container" class="hidden">
-                <div class="px-4 py-2 bg-slate-50 text-xs font-bold text-slate-500 uppercase tracking-wider">Requests</div>
-                <div id="requests-list" class="divide-y divide-slate-100"></div>
-            </div>
-
-            <!-- Friends List -->
-            <div class="flex-1 overflow-y-auto bg-white">
-                <div class="px-4 py-2 text-xs font-bold text-slate-500 uppercase tracking-wider sticky top-0 bg-white/90 backdrop-blur-sm z-10">Chats</div>
-                <div id="friends-list" class="divide-y divide-slate-50"></div>
-            </div>
-        </div>
-
-        <!-- Chat Area -->
-        <div class="flex-1 flex flex-col bg-slate-50 relative w-full h-full hidden sm:flex" id="chat-container">
-            
-            <!-- Chat Header -->
-            <div class="h-16 px-4 bg-white border-b flex justify-between items-center shadow-sm z-10">
-                <div class="flex items-center gap-3">
-                    <button id="back-btn" class="sm:hidden text-slate-500 mr-2" onclick="toggleMobileView()"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg></button>
-                    <img id="chat-avatar" src="https://ui-avatars.com/api/?name=?&background=random" class="w-10 h-10 rounded-full border border-slate-200 hidden">
-                    <div>
-                        <h2 id="chat-with-name" class="font-semibold text-slate-800 text-lg">Select a chat</h2>
-                        <p id="chat-status" class="text-xs text-slate-500 hidden">Encrypted connection active</p>
-                    </div>
-                </div>
-                <div class="flex gap-2">
-                    <button id="call-btn" class="hidden bg-green-50 text-green-600 hover:bg-green-100 hover:text-green-700 p-2.5 rounded-full transition-colors shadow-sm border border-green-100">
-                        <svg class="w-5 h-5" fill="solid" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
-                    </button>
-                </div>
-            </div>
-            
-            <!-- Video Container (Floating overlay) -->
-            <div id="video-container" class="hidden absolute top-20 right-4 w-72 h-48 bg-black rounded-2xl shadow-2xl overflow-hidden border border-slate-700 z-50 animate-fade-in">
-                <video id="remote-video" class="w-full h-full object-cover" autoplay playsinline></video>
-                <video id="local-video" class="w-20 h-28 object-cover absolute bottom-2 right-2 border-2 border-white rounded-xl shadow-lg" autoplay playsinline muted></video>
-                <button onclick="endCall()" class="absolute bottom-3 left-3 bg-red-600 hover:bg-red-700 text-white p-2 rounded-full shadow-lg transition-colors">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 8l2.586-2.586a2 2 0 00-2.828-2.828L13.172 5.172a4 4 0 00-5.656 0L4.93 7.758a2 2 0 000 2.828l.829.828m8.485 8.485l2.586 2.586a2 2 0 002.828-2.828l-2.586-2.586a4 4 0 00-5.656 0l-2.586 2.586a2 2 0 000 2.828l.829-.829m-8.485-8.485L12 12m0 0l-4.243 4.243M12 12l4.243-4.243"></path></svg>
-                </button>
-            </div>
-
-            <!-- Messages Box -->
-            <div id="chat-box" class="flex-1 p-4 overflow-y-auto chat-bg flex flex-col gap-3">
-                <div class="flex items-center justify-center h-full">
-                    <div class="bg-white/80 backdrop-blur px-6 py-3 rounded-full text-slate-500 text-sm shadow-sm border border-slate-200">
-                        🔒 Messages are end-to-end encrypted
-                    </div>
-                </div>
-            </div>
-
-            <!-- Input Area -->
-            <div class="p-3 bg-white border-t flex items-center gap-2">
-                <button class="text-slate-400 hover:text-blue-500 p-2 transition-colors">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13
+if __name__ == '__main__':
+    app.run(debug=True, port=5000)
