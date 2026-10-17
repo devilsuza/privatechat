@@ -10,7 +10,7 @@ app.secret_key = "super_secret_boss_key"
 CORS(app)
 
 def get_db_connection():
-    conn = sqlite3.connect('chat_users.db')
+    conn = sqlite3.connect('chat_users_v2.db')
     conn.row_factory = sqlite3.Row
     return conn
 
