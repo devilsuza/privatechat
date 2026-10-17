@@ -3,407 +3,457 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Secure Network Chat</title>
+    <title>Secure WhatsApp Clone</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/peerjs@1.5.1/dist/peerjs.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
     <style>
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar { width: 4px; height: 4px; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
-        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
         .chat-bg { background-color: #efeae2; background-image: radial-gradient(#d1d5db 1px, transparent 1px); background-size: 20px 20px; }
-        
-        /* Ringing Animation */
-        @keyframes ring-pulse {
-            0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7); }
-            70% { box-shadow: 0 0 0 20px rgba(59, 130, 246, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
-        }
-        .ringing-avatar { animation: ring-pulse 2s infinite; }
+        .status-ring { padding: 2px; background: linear-gradient(45deg, #f59e0b, #ec4899); border-radius: 50%; }
+        /* Hide scrollbar for status list */
+        .no-scrollbar::-webkit-scrollbar { display: none; }
     </style>
 </head>
-<body class="bg-slate-200 h-screen font-sans antialiased flex items-center justify-center relative">
+<body class="bg-slate-200 h-screen font-sans antialiased flex items-center justify-center overflow-hidden">
     
-    <!-- INCOMING CALL MODAL (New) -->
-    <div id="incoming-call-modal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center transition-all">
-        <div class="bg-white rounded-3xl p-8 w-80 text-center shadow-2xl transform scale-100">
-            <div class="w-24 h-24 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4 ringing-avatar">
-                <svg class="w-12 h-12 text-blue-600 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"></path></svg>
+    <!-- OTP/Forgot Password Modal -->
+    <div id="forgot-modal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm p-4">
+        <div class="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl">
+            <h2 class="text-xl font-bold mb-4">Reset Password</h2>
+            <div id="otp-step-1" class="space-y-3">
+                <input type="text" id="reset-user" placeholder="Username" class="w-full p-2 border rounded">
+                <input type="text" id="reset-phone" placeholder="Registered Phone No." class="w-full p-2 border rounded">
+                <button onclick="requestOTP()" class="w-full bg-blue-600 text-white p-2 rounded">Send OTP</button>
+                <button onclick="document.getElementById('forgot-modal').classList.add('hidden')" class="w-full text-slate-500 text-sm">Cancel</button>
             </div>
-            <h3 class="text-2xl font-bold text-slate-800 mb-1" id="caller-name">Friend</h3>
-            <p class="text-slate-500 text-sm mb-8">Incoming video call...</p>
-            <div class="flex justify-center gap-6">
-                <button id="reject-call-btn" class="bg-red-500 hover:bg-red-600 text-white rounded-full p-4 shadow-lg shadow-red-200 transition-transform hover:scale-110">
-                    <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-                </button>
-                <button id="accept-call-btn" class="bg-green-500 hover:bg-green-600 text-white rounded-full p-4 shadow-lg shadow-green-200 transition-transform hover:scale-110">
-                    <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"></path></svg>
-                </button>
+            <div id="otp-step-2" class="hidden space-y-3">
+                <input type="text" id="reset-otp" placeholder="Enter OTP" class="w-full p-2 border rounded">
+                <input type="password" id="reset-new-pass" placeholder="New Password" class="w-full p-2 border rounded">
+                <button onclick="verifyOTP()" class="w-full bg-green-600 text-white p-2 rounded">Reset Password</button>
             </div>
+            <p id="reset-msg" class="text-red-500 text-xs mt-2 text-center"></p>
         </div>
     </div>
 
-    <!-- 1. AUTH SCREEN -->
-    <div id="auth-screen" class="w-full max-w-md bg-white rounded-2xl shadow-2xl p-8 transform transition-all">
-        <div class="text-center mb-8">
-            <div class="w-16 h-16 bg-blue-600 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
-                <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
-            </div>
-            <h1 class="text-3xl font-extrabold text-slate-800">Welcome Boss</h1>
-            <p class="text-sm text-slate-500 mt-2">Sign in to your secure workspace</p>
-        </div>
-        <div class="space-y-4">
-            <div>
-                <label class="block text-sm font-medium text-slate-700 mb-1">Username</label>
-                <input type="text" id="username" class="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all outline-none bg-slate-50" placeholder="Enter username">
-            </div>
-            <div>
-                <label class="block text-sm font-medium text-slate-700 mb-1">Password</label>
-                <input type="password" id="password" class="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all outline-none bg-slate-50" placeholder="••••••••">
-            </div>
-            <div class="flex gap-3 pt-2">
-                <button type="button" onclick="authenticate('login')" class="flex-1 bg-blue-600 text-white font-semibold py-3 rounded-xl hover:bg-blue-700 shadow-md transition-all">Login</button>
-                <button type="button" onclick="authenticate('signup')" class="flex-1 bg-slate-800 text-white font-semibold py-3 rounded-xl hover:bg-slate-900 shadow-md transition-all">Sign Up</button>
-            </div>
-        </div>
-        <p id="auth-msg" class="text-red-500 text-sm mt-4 text-center font-medium"></p>
+    <!-- Status View Modal -->
+    <div id="status-modal" class="hidden fixed inset-0 bg-black/90 z-50 flex flex-col items-center justify-center">
+        <button onclick="document.getElementById('status-modal').classList.add('hidden')" class="absolute top-4 right-4 text-white p-2">✕ Close</button>
+        <div class="text-white text-lg font-bold mb-4" id="status-viewer-name"></div>
+        <div id="status-viewer-content" class="text-white text-3xl text-center max-w-md p-8 break-words"></div>
     </div>
 
-    <!-- 2. MAIN APP SCREEN -->
-    <div id="app-screen" class="hidden w-full h-full sm:h-[95vh] sm:max-w-6xl sm:rounded-2xl bg-white shadow-2xl flex overflow-hidden border border-slate-200">
+    <!-- AUTH SCREEN -->
+    <div id="auth-screen" class="w-full max-w-md bg-white rounded-2xl shadow-2xl p-8 transition-all mx-4">
+        <div class="text-center mb-6">
+            <h1 class="text-2xl font-bold text-slate-800">Login</h1>
+        </div>
+        <div class="space-y-3">
+            <input type="text" id="username" class="w-full px-4 py-2 border rounded-lg bg-slate-50 outline-none focus:border-blue-500" placeholder="Username">
+            <input type="password" id="password" class="w-full px-4 py-2 border rounded-lg bg-slate-50 outline-none focus:border-blue-500" placeholder="Password">
+            <input type="text" id="phone" class="w-full px-4 py-2 border rounded-lg bg-slate-50 outline-none focus:border-blue-500 hidden" placeholder="Phone (Required for Signup)">
+            
+            <button onclick="authenticate('login')" class="w-full bg-blue-600 text-white py-2.5 rounded-lg font-semibold hover:bg-blue-700">Login</button>
+            <div class="flex justify-between text-sm mt-2">
+                <button onclick="toggleSignup()" id="toggle-btn" class="text-blue-600 hover:underline">New? Sign Up instead</button>
+                <button onclick="document.getElementById('forgot-modal').classList.remove('hidden')" class="text-slate-500 hover:underline">Forgot Password?</button>
+            </div>
+            <p id="auth-msg" class="text-red-500 text-sm text-center"></p>
+        </div>
+    </div>
+
+    <!-- MAIN APP SCREEN -->
+    <div id="app-screen" class="hidden w-full h-full sm:h-[95vh] sm:max-w-6xl sm:rounded-2xl bg-white shadow-2xl flex overflow-hidden">
         
         <!-- Sidebar -->
-        <div class="w-full sm:w-80 md:w-96 bg-white border-r border-slate-200 flex flex-col h-full z-10">
-            <div class="p-4 bg-slate-50 border-b flex justify-between items-center h-16">
-                <div class="flex items-center gap-3">
-                    <img id="my-avatar" src="" alt="avatar" class="w-10 h-10 rounded-full bg-blue-100 object-cover border border-slate-300">
-                    <span id="my-name-display" class="font-bold text-slate-800"></span>
+        <div id="sidebar" class="w-full sm:w-80 md:w-96 bg-white border-r flex flex-col h-full z-10 transition-all">
+            <div class="p-3 bg-slate-50 border-b flex justify-between items-center h-16">
+                <div class="flex items-center gap-2">
+                    <img id="my-avatar" src="" class="w-10 h-10 rounded-full border">
+                    <span id="my-name-display" class="font-bold text-slate-800 text-sm"></span>
                 </div>
-                <button onclick="logout()" class="text-slate-500 hover:text-red-500 transition-colors" title="Logout">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
-                </button>
+                <button onclick="logout()" class="text-red-500 text-xs font-bold px-2">Logout</button>
             </div>
             
-            <div class="p-3 border-b bg-white">
-                <div class="relative flex items-center">
-                    <svg class="w-5 h-5 absolute left-3 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
-                    <input type="text" id="search-input" placeholder="Find new friends..." class="w-full pl-10 pr-20 py-2.5 bg-slate-100 border-none rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all">
-                    <button onclick="searchUser()" class="absolute right-1 bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1.5 rounded-lg font-medium transition-colors">Search</button>
+            <!-- Status Row -->
+            <div class="p-3 border-b bg-slate-50">
+                <div class="flex gap-2 items-center mb-2">
+                    <input type="text" id="status-input" placeholder="Type a status..." class="text-xs p-1.5 border rounded flex-1">
+                    <button onclick="postStatus()" class="bg-blue-500 text-white text-xs px-2 py-1.5 rounded">Post</button>
                 </div>
-                <div id="search-results" class="mt-2 space-y-1 text-sm"></div>
+                <div class="flex gap-3 overflow-x-auto no-scrollbar pb-1" id="status-list">
+                    <!-- Statuses inject here -->
+                </div>
             </div>
 
-            <div id="requests-container" class="hidden">
-                <div class="px-4 py-2 bg-slate-50 text-xs font-bold text-slate-500 uppercase tracking-wider">Requests</div>
-                <div id="requests-list" class="divide-y divide-slate-100"></div>
+            <!-- Search & Requests -->
+            <div class="p-2 border-b bg-white">
+                <div class="flex gap-1">
+                    <input type="text" id="search-input" placeholder="Search friends..." class="w-full text-xs p-2 bg-slate-100 rounded">
+                    <button onclick="searchUser()" class="bg-blue-600 text-white text-xs px-3 rounded">Find</button>
+                </div>
+                <div id="search-results" class="mt-1 space-y-1 text-xs"></div>
             </div>
+            <div id="requests-list" class="divide-y divide-slate-100 text-xs bg-yellow-50"></div>
 
-            <div class="flex-1 overflow-y-auto bg-white">
-                <div class="px-4 py-2 text-xs font-bold text-slate-500 uppercase tracking-wider sticky top-0 bg-white/90 backdrop-blur-sm z-10">Chats</div>
-                <div id="friends-list" class="divide-y divide-slate-50"></div>
-            </div>
+            <!-- Friends -->
+            <div class="flex-1 overflow-y-auto bg-white" id="friends-list"></div>
         </div>
 
         <!-- Chat Area -->
-        <div class="flex-1 flex flex-col bg-slate-50 relative w-full h-full hidden sm:flex" id="chat-container">
+        <div id="chat-container" class="flex-1 flex flex-col bg-slate-50 relative w-full h-full hidden sm:flex">
+            <!-- Header -->
             <div class="h-16 px-4 bg-white border-b flex justify-between items-center shadow-sm z-10">
                 <div class="flex items-center gap-3">
-                    <button id="back-btn" class="sm:hidden text-slate-500 mr-2" onclick="toggleMobileView()"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg></button>
-                    <img id="chat-avatar" src="https://ui-avatars.com/api/?name=?&background=random" class="w-10 h-10 rounded-full border border-slate-200 hidden">
+                    <button class="sm:hidden text-slate-500" onclick="toggleMobileView(false)">← Back</button>
+                    <img id="chat-avatar" src="" class="w-10 h-10 rounded-full hidden">
                     <div>
-                        <h2 id="chat-with-name" class="font-semibold text-slate-800 text-lg">Select a chat</h2>
-                        <p id="chat-status" class="text-xs text-slate-500 hidden">Encrypted connection active</p>
+                        <h2 id="chat-with-name" class="font-semibold text-slate-800 text-base">Select a chat</h2>
+                        <p id="chat-status" class="text-[10px] text-slate-500 hidden">Encrypted</p>
                     </div>
                 </div>
-                <div class="flex gap-2">
-                    <button id="call-btn" class="hidden bg-green-50 text-green-600 hover:bg-green-100 hover:text-green-700 p-2.5 rounded-full transition-colors shadow-sm border border-green-100">
-                        <svg class="w-5 h-5" fill="solid" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
-                    </button>
-                </div>
+                <button id="call-btn" class="hidden bg-green-100 text-green-700 p-2 rounded-full"><svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M15 10l4.5-2.5A1 1 0 0121 8.5v7a1 1 0 01-1.5.85L15 14v-4zM5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg></button>
             </div>
             
-            <div id="video-container" class="hidden absolute top-20 right-4 w-72 h-48 bg-black rounded-2xl shadow-2xl overflow-hidden border border-slate-700 z-50">
+            <!-- Video Container (Responsive: Float on PC, Fullscreen on Mobile) -->
+            <div id="video-container" class="hidden fixed inset-0 sm:absolute sm:inset-auto sm:top-20 sm:right-4 w-full h-full sm:w-80 sm:h-56 bg-slate-900 sm:rounded-2xl shadow-2xl overflow-hidden z-[100] flex flex-col transition-all">
                 <video id="remote-video" class="w-full h-full object-cover" autoplay playsinline></video>
-                <video id="local-video" class="w-20 h-28 object-cover absolute bottom-2 right-2 border-2 border-white rounded-xl shadow-lg" autoplay playsinline muted></video>
-                <button onclick="endCall()" class="absolute bottom-3 left-3 bg-red-600 hover:bg-red-700 text-white p-2 rounded-full shadow-lg transition-colors">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 8l2.586-2.586a2 2 0 00-2.828-2.828L13.172 5.172a4 4 0 00-5.656 0L4.93 7.758a2 2 0 000 2.828l.829.828m8.485 8.485l2.586 2.586a2 2 0 002.828-2.828l-2.586-2.586a4 4 0 00-5.656 0l-2.586 2.586a2 2 0 000 2.828l.829-.829m-8.485-8.485L12 12m0 0l-4.243 4.243M12 12l4.243-4.243"></path></svg>
-                </button>
-            </div>
-
-            <div id="chat-box" class="flex-1 p-4 overflow-y-auto chat-bg flex flex-col gap-3">
-                <div class="flex items-center justify-center h-full">
-                    <div class="bg-white/80 backdrop-blur px-6 py-3 rounded-full text-slate-500 text-sm shadow-sm border border-slate-200">
-                        🔒 Messages are end-to-end encrypted
-                    </div>
+                <video id="local-video" class="w-24 h-32 sm:w-20 sm:h-28 object-cover absolute top-4 right-4 sm:bottom-4 sm:right-4 border-2 border-white rounded-xl shadow-lg" autoplay playsinline muted></video>
+                
+                <!-- Video Controls Panel -->
+                <div class="absolute bottom-6 left-0 w-full flex justify-center gap-4 px-4">
+                    <button id="mute-btn" onclick="toggleAudio()" class="bg-white/20 backdrop-blur text-white p-3 rounded-full hover:bg-white/40">🎤</button>
+                    <button id="cam-btn" onclick="toggleVideo()" class="bg-white/20 backdrop-blur text-white p-3 rounded-full hover:bg-white/40">📷</button>
+                    <button id="full-btn" onclick="toggleFullscreen()" class="hidden sm:block bg-white/20 backdrop-blur text-white p-3 rounded-full hover:bg-white/40">⛶</button>
+                    <button onclick="endCall()" class="bg-red-600 text-white p-3 px-6 rounded-full font-bold shadow-lg hover:bg-red-700">End Call</button>
                 </div>
             </div>
 
-            <div class="p-3 bg-white border-t flex items-center gap-2">
-                <input type="text" id="msg-input" placeholder="Type a message..." class="flex-1 bg-slate-100 px-4 py-3 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-200 transition-all disabled:opacity-50" disabled>
-                <button id="send-btn" onclick="sendMessage()" class="bg-blue-600 text-white p-3 rounded-full hover:bg-blue-700 disabled:bg-slate-300 transition-colors shadow-sm disabled:shadow-none flex items-center justify-center" disabled>
-                    <svg class="w-5 h-5 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path></svg>
-                </button>
+            <!-- Messages -->
+            <div id="chat-box" class="flex-1 p-4 overflow-y-auto chat-bg flex flex-col gap-2"></div>
+
+            <!-- Input -->
+            <div class="p-2 bg-white border-t flex items-center gap-2">
+                <input type="text" id="msg-input" placeholder="Message..." class="flex-1 bg-slate-100 px-4 py-2.5 rounded-full text-sm outline-none" disabled>
+                <button id="send-btn" onclick="sendMessage()" class="bg-blue-600 text-white p-2.5 rounded-full disabled:bg-slate-300" disabled>➤</button>
             </div>
         </div>
     </div>
 
     <script>
-        let peer = null, myPeerId = null, myUsername = null, chatConn = null, activeFriendPeerId = null, localStream = null;
-        let encryptionKey = "boss_secret_room_key"; 
-        
-        // Setup Network
-        try {
-            peer = new Peer();
-            peer.on('open', id => myPeerId = id);
-            peer.on('error', err => console.error(err));
-        } catch(e) { console.error("PeerJS Error: ", e); }
+        const getAvatar = (name) => `https://ui-avatars.com/api/?name=${name}&background=random&color=fff`;
 
-        const getAvatar = (name) => `https://ui-avatars.com/api/?name=${name}&background=random&color=fff&bold=true`;
+        // 1. SESSION MANAGEMENT (5 Min Timeout)
+        let myUsername = localStorage.getItem('chat_user');
+        let lastActivity = localStorage.getItem('last_active');
+        let myPeerId = null, chatConn = null, peer = null;
+        let isSignup = false;
 
-        // Ringtone Setup (Web Audio API)
-        let audioCtx, ringInterval;
-        function playRingtone() {
-            if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            if(audioCtx.state === 'suspended') audioCtx.resume();
-            
-            function ring() {
-                const osc = audioCtx.createOscillator();
-                const gain = audioCtx.createGain();
-                osc.type = 'sine';
-                osc.frequency.setValueAtTime(440, audioCtx.currentTime);
-                osc.frequency.setValueAtTime(480, audioCtx.currentTime + 0.1);
-                
-                gain.gain.setValueAtTime(0, audioCtx.currentTime);
-                gain.gain.linearRampToValueAtTime(0.5, audioCtx.currentTime + 0.05);
-                gain.gain.setValueAtTime(0.5, audioCtx.currentTime + 0.4);
-                gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.5);
-                
-                osc.connect(gain); gain.connect(audioCtx.destination);
-                osc.start(audioCtx.currentTime); osc.stop(audioCtx.currentTime + 0.5);
+        function checkSession() {
+            if (myUsername && lastActivity) {
+                const now = new Date().getTime();
+                if (now - parseInt(lastActivity) > 5 * 60 * 1000) { // 5 mins
+                    logout(); // Auto logout
+                } else {
+                    updateActivity();
+                    initPeerAndLogin();
+                }
             }
-            ring();
-            ringInterval = setInterval(() => { ring(); setTimeout(ring, 600); }, 2500);
         }
-        function stopRingtone() { clearInterval(ringInterval); }
+        function updateActivity() { localStorage.setItem('last_active', new Date().getTime()); }
+        
+        // Update activity on mouse/key press
+        window.addEventListener('mousemove', updateActivity);
+        window.addEventListener('keypress', updateActivity);
+        
+        setInterval(() => {
+            if(myUsername) {
+                const now = new Date().getTime();
+                if (now - parseInt(localStorage.getItem('last_active')) > 5 * 60 * 1000) logout();
+            }
+        }, 10000); // Check every 10 secs
 
-        // Auth Logic
+        // Initialize Peer
+        function initPeerAndLogin() {
+            try {
+                peer = new Peer();
+                peer.on('open', id => {
+                    myPeerId = id;
+                    // Update peer ID on server silently
+                    if(myUsername) fetch('/update_peer', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username: myUsername, peer_id: id})});
+                    setupPeerListeners();
+                    showApp();
+                });
+            } catch(e) { console.error("PeerJS blocked"); }
+        }
+
+        function toggleSignup() {
+            isSignup = !isSignup;
+            document.getElementById('phone').classList.toggle('hidden');
+            document.querySelector('#auth-screen h1').textContent = isSignup ? 'Sign Up' : 'Login';
+            document.querySelector('#toggle-btn').textContent = isSignup ? 'Already have an account? Login' : 'New? Sign Up instead';
+        }
+
         async function authenticate(action) {
-            const msgBox = document.getElementById('auth-msg');
+            action = isSignup ? 'signup' : 'login';
             const user = document.getElementById('username').value.trim();
             const pass = document.getElementById('password').value;
+            const phone = document.getElementById('phone').value;
             
-            if(!user || !pass) return msgBox.textContent = "Please enter both Username and Password.";
-
-            msgBox.className = "text-blue-600 text-sm mt-4 text-center font-medium";
-            msgBox.textContent = "Connecting securely to server...";
+            if(!user || !pass) return alert("Fill required fields");
+            document.getElementById('auth-msg').textContent = "Connecting...";
             
             try {
                 const res = await fetch('/auth', {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ action: action, username: user, password: pass, peer_id: myPeerId || "offline" })
+                    body: JSON.stringify({ action: action, username: user, password: pass, phone: phone, peer_id: myPeerId || "pending" })
                 });
-                
                 const data = await res.json();
-                
-                if(res.ok && data.success) {
+                if(data.success) {
+                    localStorage.setItem('chat_user', user);
                     myUsername = user;
-                    document.getElementById('my-name-display').textContent = myUsername;
-                    document.getElementById('my-avatar').src = getAvatar(myUsername);
-                    document.getElementById('auth-screen').classList.add('hidden');
-                    document.getElementById('app-screen').classList.remove('hidden');
-                    loadDashboard();
+                    updateActivity();
+                    if(!peer) initPeerAndLogin(); else showApp();
                 } else {
-                    msgBox.className = "text-red-500 text-sm mt-4 text-center font-medium";
-                    msgBox.textContent = data.error || "Login Failed!";
+                    document.getElementById('auth-msg').textContent = data.error;
                 }
-            } catch(e) { 
-                msgBox.className = "text-red-500 text-sm mt-4 text-center font-medium";
-                msgBox.textContent = "Network Error! Server might be offline.";
-            }
+            } catch(e) { document.getElementById('auth-msg').textContent = "Server Error"; }
         }
 
-        // Dashboard & Chat Setup
+        function showApp() {
+            document.getElementById('auth-screen').classList.add('hidden');
+            document.getElementById('app-screen').classList.remove('hidden');
+            document.getElementById('my-name-display').textContent = myUsername;
+            document.getElementById('my-avatar').src = getAvatar(myUsername);
+            loadDashboard();
+            // Start Auto-Refresh Data loop
+            setInterval(loadDashboard, 5000); 
+        }
+
+        // Dashboard & Status Data (Real-time polling)
+        let activeFriend = null, activePeerId = null;
         async function loadDashboard() {
+            if(!myUsername) return;
             try {
                 const res = await fetch(`/get_dashboard_data?username=${myUsername}`);
                 const data = await res.json();
                 
-                const reqList = document.getElementById('requests-list');
-                reqList.innerHTML = '';
-                if(data.requests.length > 0) {
-                    document.getElementById('requests-container').classList.remove('hidden');
-                    data.requests.forEach(req => {
-                        reqList.innerHTML += `
-                        <div class="flex justify-between items-center p-3 hover:bg-slate-50">
-                            <div class="flex items-center gap-2"><img src="${getAvatar(req)}" class="w-8 h-8 rounded-full"><span class="text-sm font-medium">${req}</span></div>
-                            <button onclick="handleRequest('accept', '${req}')" class="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-xs font-semibold">Accept</button>
-                        </div>`;
-                    });
-                } else document.getElementById('requests-container').classList.add('hidden');
+                // Requests
+                let reqHtml = '';
+                data.requests.forEach(r => reqHtml += `<div class="flex justify-between p-2"><span>${r}</span><button onclick="handleRequest('accept','${r}')" class="bg-green-500 text-white px-2 rounded">Accept</button></div>`);
+                document.getElementById('requests-list').innerHTML = reqHtml;
 
-                const friendsList = document.getElementById('friends-list');
-                friendsList.innerHTML = '';
-                if(data.friends.length === 0) friendsList.innerHTML = '<div class="p-4 text-sm text-slate-400 text-center">No friends yet. Search to add!</div>';
-                
+                // Friends
+                let fHtml = '';
                 data.friends.forEach(f => {
-                    const statusDot = f.peer_id && f.peer_id !== "offline" ? '<span class="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></span>' : '';
-                    friendsList.innerHTML += `
-                    <div onclick="startChat('${f.username}', '${f.peer_id}')" class="cursor-pointer hover:bg-slate-50 p-3 flex items-center gap-3 transition-colors border-l-4 border-transparent hover:border-blue-500">
-                        <div class="relative"><img src="${getAvatar(f.username)}" class="w-12 h-12 rounded-full shadow-sm">${statusDot}</div>
-                        <div class="flex-1">
-                            <div class="font-semibold text-slate-800 text-sm">${f.username}</div>
-                            <div class="text-xs ${f.peer_id && f.peer_id !== 'offline' ? 'text-green-600' : 'text-slate-400'}">${f.peer_id && f.peer_id !== 'offline' ? 'Online' : 'Offline'}</div>
-                        </div>
+                    const isOnline = f.peer_id && f.peer_id !== "offline";
+                    // If this friend is currently active in chat, update their peerID for calls
+                    if(f.username === activeFriend && f.peer_id !== activePeerId) {
+                        activePeerId = f.peer_id;
+                        document.getElementById('chat-status').textContent = isOnline ? 'Online' : 'Offline';
+                        if(isOnline && (!chatConn || !chatConn.open)) { chatConn = peer.connect(activePeerId); setupConnection(chatConn); }
+                    }
+                    
+                    fHtml += `
+                    <div onclick="startChat('${f.username}', '${f.peer_id}')" class="p-3 flex items-center gap-3 border-b cursor-pointer hover:bg-slate-50">
+                        <div class="relative"><img src="${getAvatar(f.username)}" class="w-10 h-10 rounded-full">${isOnline ? '<span class="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border rounded-full"></span>':''}</div>
+                        <div class="text-sm font-semibold">${f.username}</div>
                     </div>`;
                 });
-            } catch(e) { console.error("Dashboard Load Error: ", e); }
+                document.getElementById('friends-list').innerHTML = fHtml || '<p class="p-4 text-xs text-slate-400">No friends yet.</p>';
+
+                // Statuses
+                let sHtml = '';
+                data.statuses.forEach(s => {
+                    sHtml += `
+                    <div onclick="viewStatus('${s.username}', '${s.content}')" class="flex flex-col items-center gap-1 cursor-pointer min-w-[50px]">
+                        <div class="status-ring"><img src="${getAvatar(s.username)}" class="w-10 h-10 rounded-full border-2 border-white"></div>
+                        <span class="text-[10px] text-slate-600 truncate w-12 text-center">${s.username}</span>
+                    </div>`;
+                });
+                document.getElementById('status-list').innerHTML = sHtml;
+
+            } catch(e){}
         }
 
+        async function postStatus() {
+            const txt = document.getElementById('status-input').value;
+            if(!txt) return;
+            await fetch('/post_status', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username: myUsername, content: txt})});
+            document.getElementById('status-input').value = '';
+            loadDashboard();
+        }
+        function viewStatus(name, txt) {
+            document.getElementById('status-viewer-name').textContent = name + "'s Status";
+            document.getElementById('status-viewer-content').textContent = txt;
+            document.getElementById('status-modal').classList.remove('hidden');
+        }
+
+        // Search & Requests
         async function searchUser() {
             const query = document.getElementById('search-input').value;
             if(!query) return;
             const res = await fetch(`/search?username=${query}&me=${myUsername}`);
             const users = await res.json();
-            const resDiv = document.getElementById('search-results');
-            if(users.length === 0) return resDiv.innerHTML = '<div class="p-2 text-xs text-slate-400">No users found</div>';
-            
-            let html = '<div class="border rounded-xl bg-white shadow-sm overflow-hidden">';
-            users.forEach(u => {
-                html += `<div class="flex justify-between items-center p-2 border-b last:border-b-0"><span class="text-sm text-slate-700 flex items-center gap-2"><img src="${getAvatar(u)}" class="w-6 h-6 rounded-full">${u}</span> <button onclick="handleRequest('send', '${u}')" class="bg-slate-100 text-slate-700 hover:bg-slate-200 px-3 py-1 rounded-lg text-xs font-medium">Add</button></div>`;
-            });
-            resDiv.innerHTML = html + '</div>';
+            let html = '';
+            users.forEach(u => html += `<div class="flex justify-between p-2 border-b"><span>${u}</span> <button onclick="handleRequest('send', '${u}')" class="bg-blue-100 text-blue-700 px-2 rounded">Add</button></div>`);
+            document.getElementById('search-results').innerHTML = html;
         }
-
-        async function handleRequest(action, otherUser) {
-            await fetch('/friend_action', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ action: action, sender: myUsername, receiver: otherUser }) });
+        async function handleRequest(act, user) {
+            await fetch('/friend_action', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: act, sender: myUsername, receiver: user})});
             document.getElementById('search-input').value = ''; document.getElementById('search-results').innerHTML = ''; loadDashboard();
         }
 
-        function toggleMobileView() {
-            document.getElementById('chat-container').classList.add('hidden');
-            document.querySelector('.w-full.sm\\:w-80').classList.remove('hidden');
+        // Chat UI & Logic
+        function toggleMobileView(showChat) {
+            if(showChat) {
+                document.getElementById('sidebar').classList.add('hidden');
+                document.getElementById('chat-container').classList.remove('hidden');
+            } else {
+                document.getElementById('chat-container').classList.add('hidden');
+                document.getElementById('sidebar').classList.remove('hidden');
+            }
         }
 
-        function startChat(friendName, friendPeerId) {
-            activeFriendPeerId = friendPeerId;
-            if(window.innerWidth < 640) { document.querySelector('.w-full.sm\\:w-80').classList.add('hidden'); document.getElementById('chat-container').classList.remove('hidden'); }
-
-            document.getElementById('chat-with-name').textContent = friendName;
-            document.getElementById('chat-avatar').src = getAvatar(friendName);
-            document.getElementById('chat-avatar').classList.remove('hidden');
+        function startChat(name, pId) {
+            activeFriend = name; activePeerId = pId;
+            if(window.innerWidth < 640) toggleMobileView(true);
+            document.getElementById('chat-with-name').textContent = name;
+            document.getElementById('chat-avatar').src = getAvatar(name); document.getElementById('chat-avatar').classList.remove('hidden');
             document.getElementById('chat-status').classList.remove('hidden');
             document.getElementById('chat-box').innerHTML = '';
             
-            if(friendPeerId && friendPeerId !== "offline" && peer) {
-                document.getElementById('chat-status').textContent = 'Connecting securely...'; document.getElementById('chat-status').className = 'text-xs text-amber-500';
-                chatConn = peer.connect(friendPeerId); setupConnection(chatConn);
+            if(pId && pId !== "offline" && peer) {
+                document.getElementById('chat-status').textContent = 'Online';
+                chatConn = peer.connect(pId); setupConnection(chatConn);
             } else {
-                document.getElementById('chat-status').textContent = 'User is Offline'; document.getElementById('chat-status').className = 'text-xs text-slate-400';
-                displayMessage("User is offline. They need to log in to chat.", 'bg-red-50 text-red-600 self-center text-xs border border-red-100', false);
+                document.getElementById('chat-status').textContent = 'Offline';
                 document.getElementById('msg-input').disabled = true; document.getElementById('send-btn').disabled = true; document.getElementById('call-btn').classList.add('hidden');
             }
         }
 
-        if(peer) peer.on('connection', (conn) => setupConnection(conn));
+        function setupPeerListeners() {
+            peer.on('connection', (conn) => setupConnection(conn));
+            peer.on('call', async (call) => {
+                if(confirm("Incoming video call... Accept?")) {
+                    try {
+                        localStream = await navigator.mediaDevices.getUserMedia({video: true, audio: true});
+                        document.getElementById('local-video').srcObject = localStream;
+                        call.answer(localStream);
+                        setupVideoUI(call);
+                    } catch(e) { alert("Camera Error"); }
+                } else call.close();
+            });
+        }
 
         function setupConnection(conn) {
             chatConn = conn;
             conn.on('open', () => {
-                document.getElementById('chat-status').textContent = 'Online & Secured'; document.getElementById('chat-status').className = 'text-xs text-green-600 font-medium';
                 document.getElementById('msg-input').disabled = false; document.getElementById('send-btn').disabled = false; document.getElementById('call-btn').classList.remove('hidden');
-                document.getElementById('chat-box').innerHTML = '<div class="text-center text-xs text-slate-400 my-2 bg-slate-200/50 py-1 px-3 rounded-full w-max mx-auto">Encryption Active</div>';
             });
             conn.on('data', (data) => {
                 if(data.type === 'text') {
-                    const decrypted = CryptoJS.AES.decrypt(data.content, encryptionKey).toString(CryptoJS.enc.Utf8);
-                    displayMessage(decrypted, 'bg-white text-slate-800 self-start rounded-tl-sm border border-slate-200 shadow-sm', false);
+                    const dec = CryptoJS.AES.decrypt(data.content, "boss_key").toString(CryptoJS.enc.Utf8);
+                    displayMsg(dec, false);
                 }
-            });
-            conn.on('close', () => {
-                document.getElementById('chat-status').textContent = 'Disconnected'; document.getElementById('chat-status').className = 'text-xs text-slate-400';
-                document.getElementById('msg-input').disabled = true; document.getElementById('send-btn').disabled = true; document.getElementById('call-btn').classList.add('hidden');
             });
         }
 
         function sendMessage() {
-            const text = document.getElementById('msg-input').value.trim();
-            if (text && chatConn?.open) {
-                const encrypted = CryptoJS.AES.encrypt(text, encryptionKey).toString();
-                chatConn.send({ type: 'text', content: encrypted });
-                displayMessage(text, 'bg-blue-600 text-white self-end rounded-tr-sm shadow-sm', true);
+            const txt = document.getElementById('msg-input').value.trim();
+            if(txt && chatConn?.open) {
+                chatConn.send({ type: 'text', content: CryptoJS.AES.encrypt(txt, "boss_key").toString() });
+                displayMsg(txt, true);
                 document.getElementById('msg-input').value = '';
             }
         }
-        document.getElementById('msg-input').addEventListener('keypress', (e) => { if (e.key === 'Enter') sendMessage(); });
-
-        function displayMessage(text, classes, isSender) {
-            const time = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-            const timeClass = isSender ? 'text-blue-200' : 'text-slate-400';
-            document.getElementById('chat-box').innerHTML += `
-            <div class="max-w-[75%] rounded-2xl px-4 py-2 text-[15px] flex flex-col ${classes}"><span>${text}</span><span class="text-[10px] ${timeClass} self-end mt-1">${time}</span></div>`;
+        function displayMsg(txt, isSender) {
+            const cls = isSender ? 'bg-blue-600 text-white self-end' : 'bg-white text-slate-800 self-start border';
+            document.getElementById('chat-box').innerHTML += `<div class="max-w-[75%] rounded-xl px-3 py-2 text-sm ${cls}">${txt}</div>`;
             document.getElementById('chat-box').scrollTop = document.getElementById('chat-box').scrollHeight;
         }
 
-        // NEW VIDEO CALL LOGIC WITH RINGTONE & MODAL
-        let incomingCallObj = null;
+        // VIDEO CALL CONTROLS
+        let currentCall = null;
+        let audioEnabled = true, videoEnabled = true, isFull = false;
 
-        if(peer) {
-            peer.on('call', (call) => {
-                incomingCallObj = call;
-                document.getElementById('incoming-call-modal').classList.remove('hidden');
-                document.getElementById('caller-name').textContent = "Incoming Call";
-                playRingtone(); // Start Ringing!
-            });
-        }
-
-        // Caller clicks "Accept"
-        document.getElementById('accept-call-btn').onclick = async () => {
-            stopRingtone();
-            document.getElementById('incoming-call-modal').classList.add('hidden');
-            if(incomingCallObj) {
-                try {
-                    localStream = await navigator.mediaDevices.getUserMedia({video: true, audio: true});
-                    document.getElementById('local-video').srcObject = localStream;
-                    incomingCallObj.answer(localStream);
-                    setupCall(incomingCallObj);
-                } catch(e) { alert("Camera not found or permission denied."); }
-            }
-        };
-
-        // Caller clicks "Reject"
-        document.getElementById('reject-call-btn').onclick = () => {
-            stopRingtone();
-            document.getElementById('incoming-call-modal').classList.add('hidden');
-            if(incomingCallObj) { incomingCallObj.close(); incomingCallObj = null; }
-        };
-
-        // Outgoing Call
         document.getElementById('call-btn').onclick = async () => {
             try {
                 localStream = await navigator.mediaDevices.getUserMedia({video: true, audio: true});
                 document.getElementById('local-video').srcObject = localStream;
-                const call = peer.call(activeFriendPeerId, localStream);
-                setupCall(call);
-            } catch(e) { alert("Camera not found. Ensure you are using HTTPS."); }
+                const call = peer.call(activePeerId, localStream);
+                setupVideoUI(call);
+            } catch(e) { alert("Camera permission required!"); }
         };
 
-        function setupCall(call) {
+        function setupVideoUI(call) {
             document.getElementById('video-container').classList.remove('hidden');
-            document.getElementById('call-btn').classList.add('hidden');
-            call.on('stream', remoteStream => document.getElementById('remote-video').srcObject = remoteStream);
+            call.on('stream', rStream => document.getElementById('remote-video').srcObject = rStream);
             call.on('close', endCall);
-            window.currentCall = call;
+            currentCall = call;
+            // Reset states
+            audioEnabled = true; videoEnabled = true;
+            document.getElementById('mute-btn').textContent = '🎤'; document.getElementById('cam-btn').textContent = '📷';
+        }
+
+        function toggleAudio() {
+            if(!localStream) return;
+            audioEnabled = !audioEnabled;
+            localStream.getAudioTracks()[0].enabled = audioEnabled;
+            document.getElementById('mute-btn').textContent = audioEnabled ? '🎤' : '🔇';
+            document.getElementById('mute-btn').classList.toggle('bg-red-500', !audioEnabled);
+        }
+        function toggleVideo() {
+            if(!localStream) return;
+            videoEnabled = !videoEnabled;
+            localStream.getVideoTracks()[0].enabled = videoEnabled;
+            document.getElementById('cam-btn').textContent = videoEnabled ? '📷' : '🚫';
+            document.getElementById('cam-btn').classList.toggle('bg-red-500', !videoEnabled);
+        }
+        function toggleFullscreen() {
+            const vc = document.getElementById('video-container');
+            if(!isFull) { vc.classList.add('fixed', 'inset-0', 'w-full', 'h-full', 'rounded-none'); vc.classList.remove('sm:absolute', 'sm:inset-auto', 'sm:top-20', 'sm:right-4', 'sm:w-80', 'sm:h-56', 'sm:rounded-2xl'); } 
+            else { vc.classList.remove('fixed', 'inset-0', 'w-full', 'h-full', 'rounded-none'); vc.classList.add('sm:absolute', 'sm:inset-auto', 'sm:top-20', 'sm:right-4', 'sm:w-80', 'sm:h-56', 'sm:rounded-2xl'); }
+            isFull = !isFull;
         }
 
         function endCall() {
-            if(window.currentCall) window.currentCall.close();
+            if(currentCall) currentCall.close();
             if(localStream) localStream.getTracks().forEach(t => t.stop());
             document.getElementById('video-container').classList.add('hidden');
-            if(chatConn?.open) document.getElementById('call-btn').classList.remove('hidden');
         }
 
-        function logout() { location.reload(); }
+        function logout() {
+            localStorage.removeItem('chat_user'); localStorage.removeItem('last_active');
+            location.reload();
+        }
+
+        // OTP LOGIC (Mock demo)
+        async function requestOTP() {
+            const u = document.getElementById('reset-user').value;
+            const p = document.getElementById('reset-phone').value;
+            const res = await fetch('/request_otp', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username: u, phone: p})});
+            const data = await res.json();
+            if(data.success) {
+                alert("TESTING MODE: Your OTP is " + data.demo_otp + "\n(Real SMS requires Twilio API)");
+                document.getElementById('otp-step-1').classList.add('hidden');
+                document.getElementById('otp-step-2').classList.remove('hidden');
+            } else { document.getElementById('reset-msg').textContent = data.error; }
+        }
+
+        async function verifyOTP() {
+            const u = document.getElementById('reset-user').value;
+            const otp = document.getElementById('reset-otp').value;
+            const np = document.getElementById('reset-new-pass').value;
+            const res = await fetch('/reset_password', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username: u, otp: otp, new_password: np})});
+            const data = await res.json();
+            if(data.success) { alert("Password Reset Successfully!"); location.reload(); }
+            else { document.getElementById('reset-msg').textContent = data.error; }
+        }
+
+        // Auto Boot Check
+        checkSession();
     </script>
 </body>
 </html>
